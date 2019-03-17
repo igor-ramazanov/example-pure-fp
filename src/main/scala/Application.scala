@@ -10,41 +10,18 @@ import simulacrum.typeclass
 import scala.language.experimental.macros
 import scala.language.higherKinds
 
-object Application extends IOApp {
+object Application {
   type NotString[A] = A <:!< String
   type NotCaseClass[A] = A <:!< Product
 
-  /*Running program substituting concrete effect type*/
-  override def run(args: List[String]): IO[ExitCode] =
-    program[IO]
-
   final case class Address(city: String, zip: Int, street: String)
   final case class User(id: String, name: String, address: Address)
+
   @typeclass
   /* Effect of HTTP requests */
   trait HTTP[F[_]] {
     def get: F[String]
     def post(user: User): F[Unit]
-  }
-
-  /*Concrete implementation (simplified for brevity)*/
-  implicit val ioHttp: HTTP[IO] = new HTTP[IO] {
-    override def get: IO[String] = IO {
-      """
-        |{
-        | "id": "abc123",
-        | "name": "Igor Ramazanov",
-        | "address": {
-        |   "city": "St. Petersburg",
-        |   "zip": 123456,
-        |   "street": "Lenina"
-        | }
-        |}
-      """.stripMargin
-    }
-    override def post(user: User): IO[Unit] = IO {
-      println("POST: " + user)
-    }
   }
 
   @typeclass
@@ -53,11 +30,6 @@ object Application extends IOApp {
     def out(user: User): F[Unit]
   }
 
-  /*Concrete console printing effect implementation*/
-  implicit val ioConsole: Console[IO] = (user: User) =>
-    IO(println("CONSOLE: " + user))
-
-  @typeclass
   /*Typeclass for upper/lower case converting*/
   trait CaseConverter[A] {
     def toUpper(a: A): A
@@ -104,17 +76,14 @@ object Application extends IOApp {
 
   import GenericCaseConverter._
 
-  /*Our program written in abstract manner*/
+  /*Our program written in tagless final style*/
   def program[F[_]: Monad: HTTP: Console]: F[ExitCode] =
     for {
       json <- HTTP[F].get
-      exitCode <- decode[User](json).fold(
-        _ => ExitCode.Error.pure[F], { user =>
-          val (lower, upper) =
-            (gen[User].toLower(user), gen[User].toUpper(user))
-          Console[F].out(lower) >> HTTP[F].post(upper) >> ExitCode.Success
-            .pure[F]
-        }
-      )
+      exitCode <- decode[User](json).fold(_ => ExitCode.Error.pure[F], { user =>
+        Console[F].out(gen[User].toLower(user)) >>
+          HTTP[F].post(gen[User].toUpper(user)) >>
+          ExitCode.Success.pure[F]
+      })
     } yield exitCode
 }
